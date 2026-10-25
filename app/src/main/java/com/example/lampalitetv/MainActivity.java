@@ -31,8 +31,8 @@ public final class MainActivity extends Activity {
     private WebView webView;
     private View videoView;
     private WebChromeClient.CustomViewCallback videoCallback;
-    private boolean diagnosticsEnabled = false;
-    private boolean reducedMotion = false;
+    private boolean reducedMotion = true;
+    private boolean menuLongPressHandled = false;
     private static final String MOTION_STYLE_ID = "lampa-lite-motion";
     private static final String MOTION_CSS = "html *:not(.preloader):not(.loader):not(.spinner),"
             + "html *:not(.preloader):not(.loader):not(.spinner)::before,"
@@ -45,7 +45,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         getWindow().setBackgroundDrawableResource(android.R.color.black);
         setFullscreen();
-        reducedMotion = getPreferences(MODE_PRIVATE).getBoolean("reducedMotion", false);
+        reducedMotion = getPreferences(MODE_PRIVATE).getBoolean("reducedMotion", true);
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
@@ -174,9 +174,17 @@ public final class MainActivity extends Activity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        // Long MENU toggles an opt-in CSS experiment without touching TV settings.
+        // One toggle per MENU hold, even if the remote sends repeated key-down events.
+        if (event.getKeyCode() == KeyEvent.KEYCODE_MENU && event.getAction() == KeyEvent.ACTION_UP) {
+            if (menuLongPressHandled) {
+                menuLongPressHandled = false;
+                return true;
+            }
+        }
         if (event.getKeyCode() == KeyEvent.KEYCODE_MENU
                 && event.getAction() == KeyEvent.ACTION_DOWN && event.isLongPress()) {
+            if (menuLongPressHandled) return true;
+            menuLongPressHandled = true;
             reducedMotion = !reducedMotion;
             getPreferences(MODE_PRIVATE).edit().putBoolean("reducedMotion", reducedMotion).apply();
             applyReducedMotion();
@@ -184,9 +192,6 @@ public final class MainActivity extends Activity {
                     Toast.LENGTH_SHORT).show();
             Log.i(TAG, "reducedMotion=" + reducedMotion);
             return true;
-        }
-        if (diagnosticsEnabled && event.getAction() == KeyEvent.ACTION_DOWN) {
-            Log.d(TAG, "key=" + event.getKeyCode());
         }
         return super.dispatchKeyEvent(event);
     }
@@ -203,7 +208,11 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onResume() {
         super.onResume();
-        if (webView != null) webView.onResume();
+        if (webView != null) {
+            webView.onResume();
+            // Recover D-pad focus after returning from an external video player.
+            if (videoView == null && !webView.hasFocus()) webView.requestFocus();
+        }
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         if (webView != null) webView.saveState(out);
