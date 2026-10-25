@@ -10,8 +10,14 @@ android {
         applicationId 'com.example.lampalitetv'
         minSdk 26
         targetSdk 28
-        versionCode 7
-        versionName '1.5.1-c645'
+        versionCode 8
+        versionName '1.5.2-c645'
+    }
+
+    lint {
+        // This APK is sideloaded on Android TV, not submitted to Google Play.
+        // Keep target-API policy visible as a warning without changing TV behavior.
+        warning 'ExpiredTargetSdkVersion'
     }
 
     compileOptions {

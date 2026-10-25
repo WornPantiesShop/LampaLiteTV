@@ -1,10 +1,12 @@
 param(
     [string]$Device = "192.168.31.18:5555",
-    [int]$Seconds = 20
+    [string]$AdbPath = (Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"),
+    [int]$Seconds = 20,
+    [string]$OutputDirectory = (Join-Path $env:USERPROFILE "Desktop")
 )
 $ErrorActionPreference = "Stop"
 if ($Seconds -lt 5 -or $Seconds -gt 120) { throw "Seconds must be between 5 and 120" }
-$adb = Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"
+$adb = $AdbPath
 if (!(Test-Path $adb)) { throw "ADB not found: $adb" }
 & $adb connect $Device | Out-Host
 & $adb -s $Device get-state | Out-Null
@@ -14,12 +16,13 @@ if ($null -eq $focus -or $focus.ToString() -notmatch "com.example.lampalitetv") 
     throw "Open Lampa Lite TV on the television before starting diagnostics."
 }
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$folder = Join-Path $env:USERPROFILE "Desktop\Lampa-C645-Diagnostics-$stamp"
+$folder = Join-Path $OutputDirectory "Lampa-C645-Diagnostics-$stamp"
 New-Item -ItemType Directory -Path $folder | Out-Null
 "Read-only CPU, memory and graphics capture for TCL C645" | Set-Content (Join-Path $folder "README.txt")
 ("Device: " + $Device + "; started: " + (Get-Date -Format o)) | Add-Content (Join-Path $folder "README.txt")
 & $adb -s $Device shell getprop ro.build.version.release | Set-Content (Join-Path $folder "android-version.txt")
 & $adb -s $Device shell getprop ro.product.model | Set-Content (Join-Path $folder "model.txt")
+& $adb -s $Device shell dumpsys webviewupdate | Set-Content (Join-Path $folder "webview-provider.txt")
 & $adb -s $Device shell dumpsys meminfo com.example.lampalitetv | Set-Content (Join-Path $folder "app-memory-before.txt")
 & $adb -s $Device shell dumpsys gfxinfo com.example.lampalitetv | Set-Content (Join-Path $folder "app-gfxinfo-before.txt")
 Write-Host "Navigate continuously with the remote for $Seconds seconds..."
@@ -35,6 +38,7 @@ while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
 & $adb -s $Device shell dumpsys meminfo com.example.lampalitetv | Set-Content (Join-Path $folder "app-memory-after.txt")
 & $adb -s $Device shell dumpsys gfxinfo com.example.lampalitetv | Set-Content (Join-Path $folder "app-gfxinfo-after.txt")
 & $adb -s $Device shell dumpsys meminfo | Select-String -Pattern "Total RAM:|Free RAM:|Used RAM:|Lost RAM:" | Set-Content (Join-Path $folder "system-memory-summary.txt")
+& $adb -s $Device shell logcat -d -t 2000 -v threadtime -s LampaLiteTV AndroidRuntime chromium | Set-Content (Join-Path $folder "app-logcat.txt")
 $zip = "$folder.zip"
 Compress-Archive -Path (Join-Path $folder "*") -DestinationPath $zip
 Write-Host "Diagnosis complete. Upload this ZIP: $zip"

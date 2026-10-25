@@ -1,9 +1,11 @@
 param(
     [string]$Device = "192.168.31.18:5555",
-    [int]$Seconds = 12
+    [string]$AdbPath = (Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"),
+    [int]$Seconds = 12,
+    [string]$OutputPath = (Join-Path $env:USERPROFILE "Desktop\Lampa_C645_FPS_full.txt")
 )
 $ErrorActionPreference = "Stop"
-$adb = Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"
+$adb = $AdbPath
 if (!(Test-Path $adb)) { throw "ADB not found: $adb" }
 if ($Seconds -lt 3) { throw "Use at least 3 seconds" }
 $package = "com.example.lampalitetv"
@@ -16,6 +18,7 @@ $layers = @(& $adb -s $Device shell dumpsys SurfaceFlinger --list | ForEach-Obje
 if ($layers.Count -lt 1) { throw "No Lampa Lite surface found" }
 $layer = $layers[-1]
 $times = [System.Collections.Generic.SortedSet[long]]::new()
+$refreshPeriodNs = 0L
 Write-Host "Surface: $layer"
 & $adb -s $Device shell dumpsys SurfaceFlinger --latency-clear $layer | Out-Null
 Write-Host "Move continuously across the SAME row of cards for $Seconds seconds."
@@ -24,6 +27,8 @@ Write-Host "Move continuously across the SAME row of cards for $Seconds seconds.
 $watch = [Diagnostics.Stopwatch]::StartNew()
 while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
     $raw = @(& $adb -s $Device shell dumpsys SurfaceFlinger --latency $layer)
+    if ($LASTEXITCODE -ne 0) { throw "SurfaceFlinger capture failed" }
+    if ($raw.Count -gt 0 -and $raw[0].Trim() -match '^\d+$') { $refreshPeriodNs = [long]$raw[0].Trim() }
     foreach ($line in ($raw | Select-Object -Skip 1)) {
         $p = $line.Trim() -split '\s+'
         if ($p.Count -eq 3 -and $p[1] -match '^\d+$' -and $p[1] -ne "9223372036854775807") {
@@ -51,6 +56,23 @@ $duration = ($frames[-1] - $frames[0]) / 1000000000.0
 Write-Host ("Captured {0} frame timestamps spanning {1:N1}s" -f $frames.Count,$duration)
 Write-Host ("Mean FPS (includes pauses): {0:N1}; median interval: {1:N2}ms" -f (1000/$mean),$median)
 Write-Host ("Intervals <=24ms: {0}/{1}; >33.3ms: {2}; >=100ms: {3}" -f $quick.Count,$intervals.Count,$slow.Count,$pauses.Count)
-$out = Join-Path $env:USERPROFILE "Desktop\Lampa_C645_FPS_full.txt"
-(@("16666666") + @($frames | ForEach-Object { "$_" })) | Set-Content $out
+$out = [IO.Path]::GetFullPath($OutputPath)
+$parent = Split-Path -Parent $out
+New-Item -ItemType Directory -Force -Path $parent | Out-Null
+(@("$refreshPeriodNs") + @($frames | ForEach-Object { "$_" })) | Set-Content $out
 Write-Host "Captured presentation timestamps: $out"
+
+# Presentation gaps include intentional idle time; do not label them WebView jank.
+$summary = [ordered]@{
+    device = $Device
+    surface = $layer
+    refreshPeriodNs = $refreshPeriodNs
+    requestedSeconds = $Seconds
+    capturedSeconds = $duration
+    frames = $frames.Count
+    meanPresentationFps = 1000 / $mean
+    medianIntervalMs = $median
+    intervalsOver33_3Ms = $slow.Count
+    intervalsAtLeast100Ms = $pauses.Count
+}
+$summary | ConvertTo-Json | Set-Content ([IO.Path]::ChangeExtension($out, ".json"))

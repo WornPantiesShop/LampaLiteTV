@@ -4,3 +4,6 @@ local.properties
 build/
 */build/
 *.iml
+
+__pycache__/
+diagnostics/

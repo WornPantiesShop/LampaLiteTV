@@ -218,12 +218,19 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onPause() {
-        if (webView != null) webView.onPause();
+        if (webView != null) {
+            webView.onPause();
+            // onPause() alone leaves JavaScript timers running in the hidden catalog.
+            // This process owns one WebView. Do not pause timers for fullscreen video.
+            if (videoView == null) webView.pauseTimers();
+        }
         super.onPause();
     }
     @Override protected void onResume() {
         super.onResume();
         if (webView != null) {
+            // Timers are process-wide: always resume before restoring page/focus.
+            webView.resumeTimers();
             webView.onResume();
             // Recover D-pad focus after returning from an external video player.
             if (videoView == null && !webView.hasFocus()) webView.requestFocus();
@@ -237,6 +244,8 @@ public final class MainActivity extends Activity {
         if (videoView != null) exitVideo();
         if (webView != null) {
             root.removeView(webView);
+            // Do not leave the process-wide timer state paused for the next Activity.
+            webView.resumeTimers();
             webView.destroy();
             webView = null;
         }

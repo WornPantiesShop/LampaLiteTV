@@ -1,11 +1,15 @@
 param(
-    [string]$Device = "192.168.31.18:5555"
+    [string]$Device = "192.168.31.18:5555",
+    [string]$ApkPath,
+    [string]$SdkPath = (Join-Path $env:LOCALAPPDATA "Android\Sdk"),
+    [string]$KeystorePath = (Join-Path $env:USERPROFILE ".android\debug.keystore"),
+    [string]$WorkDirectory = $env:TEMP
 )
 $ErrorActionPreference = "Stop"
 
-$Sdk = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+$Sdk = $SdkPath
 $adb = Join-Path $Sdk "platform-tools\adb.exe"
-$keystore = Join-Path $env:USERPROFILE ".android\debug.keystore"
+$keystore = $KeystorePath
 if (-not (Test-Path $adb)) { throw "ADB not found: $adb" }
 if (-not (Test-Path $keystore)) { throw "Local Android Studio debug keystore not found: $keystore" }
 
@@ -16,13 +20,20 @@ $signer = Get-ChildItem -Path $buildTools -Recurse -Filter "apksigner.bat" -File
 if (-not $signer) { throw "apksigner.bat not found. Install Android SDK Build-Tools in Android Studio." }
 
 $url = "https://github.com/WornPantiesShop/LampaLiteTV/releases/download/dev/LampaLiteTV-debug.apk"
-$apk = Join-Path $env:TEMP "LampaLiteTV-from-GitHub.apk"
-$signed = Join-Path $env:TEMP "LampaLiteTV-locally-signed.apk"
+$apk = Join-Path $WorkDirectory "LampaLiteTV-from-GitHub.apk"
+$signed = Join-Path $WorkDirectory "LampaLiteTV-locally-signed.apk"
+New-Item -ItemType Directory -Force -Path $WorkDirectory | Out-Null
 
-Write-Host "Downloading the latest development APK from GitHub..."
-Invoke-WebRequest -Uri $url -OutFile $apk -MaximumRedirection 10
+if ($ApkPath) {
+    $apk = (Resolve-Path -LiteralPath $ApkPath).Path
+    if ([string]::Equals($apk, [IO.Path]::GetFullPath($signed), [StringComparison]::OrdinalIgnoreCase)) { throw "Input APK must differ from the signed output" }
+    Write-Host "Using local build: $apk"
+} else {
+    Write-Host "Downloading the latest development APK from GitHub..."
+    Invoke-WebRequest -Uri $url -OutFile $apk -MaximumRedirection 10
+}
 if ((Get-Item $apk).Length -lt 10000) { throw "Downloaded APK looks too small" }
-Write-Host "GitHub APK SHA-256: $((Get-FileHash $apk -Algorithm SHA256).Hash)"
+Write-Host "Input APK SHA-256: $((Get-FileHash $apk -Algorithm SHA256).Hash)"
 
 # Re-sign GitHub build with the computer's existing Android Studio debug key.
 # Never upload the keystore to GitHub or replace the installed app's data.
