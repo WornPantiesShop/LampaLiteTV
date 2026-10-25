@@ -134,9 +134,8 @@ public final class MainActivity extends Activity {
                 "Закрыть"
         };
         new AlertDialog.Builder(this)
-                .setTitle("Lampa Lite TV 1.5 — настройки")
-                .setMessage("Анимации каталога работают в обычном режиме.\n"
-                        + "Удерживайте «Назад» около секунды, чтобы открыть это меню.")
+                // Android AlertDialog cannot show setMessage and setItems together reliably.
+                .setTitle("Lampa Lite TV — настройки")
                 .setItems(options, (dialog, which) -> {
                     if (which == 0) {
                         hideOverscroll = !hideOverscroll;
