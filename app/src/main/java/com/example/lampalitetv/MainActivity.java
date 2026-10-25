@@ -32,12 +32,20 @@ public final class MainActivity extends Activity {
     private View videoView;
     private WebChromeClient.CustomViewCallback videoCallback;
     private boolean diagnosticsEnabled = false;
+    private boolean reducedMotion = false;
+    private static final String MOTION_STYLE_ID = "lampa-lite-motion";
+    private static final String MOTION_CSS = "html *:not(.preloader):not(.loader):not(.spinner),"
+            + "html *:not(.preloader):not(.loader):not(.spinner)::before,"
+            + "html *:not(.preloader):not(.loader):not(.spinner)::after"
+            + "{transition-duration:0s!important;animation-duration:0s!important;scroll-behavior:auto!important;}";
+
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().setBackgroundDrawableResource(android.R.color.black);
         setFullscreen();
+        reducedMotion = getPreferences(MODE_PRIVATE).getBoolean("reducedMotion", false);
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
@@ -66,6 +74,9 @@ public final class MainActivity extends Activity {
         settings.setSupportZoom(false);
         // Keep the platform's default GPU layer, cache policy and renderer scheduling.
         webView.setWebViewClient(new WebViewClient() {
+            @Override public void onPageFinished(WebView view, String url) {
+                applyReducedMotion();
+            }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) {
                     Toast.makeText(MainActivity.this, "Не удалось загрузить Lampa. Проверьте сеть.", Toast.LENGTH_LONG).show();
@@ -121,6 +132,20 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void applyReducedMotion() {
+        if (webView == null) return;
+        // Add/remove a single optional CSS rule; no repeated timer or RAF loop.
+        String css = MOTION_CSS.replace("\\", "\\\\").replace("'", "\\'");
+        String js = "(function(){var id='" + MOTION_STYLE_ID + "';"
+                + "var el=document.getElementById(id);"
+                + (reducedMotion
+                    ? "if(!el){el=document.createElement('style');el.id=id;el.textContent='" + css
+                            + "';(document.head||document.documentElement).appendChild(el);}"
+                    : "if(el){el.remove();}")
+                + "})()";
+        webView.evaluateJavascript(js, null);
+    }
+
     private void setFullscreen() {
         int desired = View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -149,12 +174,15 @@ public final class MainActivity extends Activity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        // Long-press MENU toggles *logging only*. No animation, timer or injected RAF loop.
-        if (event.getKeyCode() == KeyEvent.KEYCODE_MENU && event.isLongPress()
-                && event.getAction() == KeyEvent.ACTION_DOWN) {
-            diagnosticsEnabled = !diagnosticsEnabled;
-            Toast.makeText(this, diagnosticsEnabled ? "Диагностика включена" : "Диагностика выключена", Toast.LENGTH_SHORT).show();
-            Log.i(TAG, "diagnostics=" + diagnosticsEnabled + " (log only; use SurfaceFlinger for FPS)");
+        // Long MENU toggles an opt-in CSS experiment without touching TV settings.
+        if (event.getKeyCode() == KeyEvent.KEYCODE_MENU
+                && event.getAction() == KeyEvent.ACTION_DOWN && event.isLongPress()) {
+            reducedMotion = !reducedMotion;
+            getPreferences(MODE_PRIVATE).edit().putBoolean("reducedMotion", reducedMotion).apply();
+            applyReducedMotion();
+            Toast.makeText(this, reducedMotion ? "Анимации сокращены" : "Обычные анимации",
+                    Toast.LENGTH_SHORT).show();
+            Log.i(TAG, "reducedMotion=" + reducedMotion);
             return true;
         }
         if (diagnosticsEnabled && event.getAction() == KeyEvent.ACTION_DOWN) {
