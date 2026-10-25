@@ -11,7 +11,6 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -31,21 +30,18 @@ public final class MainActivity extends Activity {
     private WebView webView;
     private View videoView;
     private WebChromeClient.CustomViewCallback videoCallback;
-    private boolean reducedMotion = true;
-    private boolean menuLongPressHandled = false;
-    private static final String MOTION_STYLE_ID = "lampa-lite-motion";
-    private static final String MOTION_CSS = "html *:not(.preloader):not(.loader):not(.spinner),"
-            + "html *:not(.preloader):not(.loader):not(.spinner)::before,"
-            + "html *:not(.preloader):not(.loader):not(.spinner)::after"
-            + "{transition-duration:0s!important;animation-duration:0s!important;scroll-behavior:auto!important;}";
-
+    private boolean hideOverscroll = true;
+    private boolean backHeld = false;
+    private boolean settingsOpenedForBack = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().setBackgroundDrawableResource(android.R.color.black);
         setFullscreen();
-        reducedMotion = getPreferences(MODE_PRIVATE).getBoolean("reducedMotion", true);
+        // Remove the global CSS override from 1.3/1.4: it hid catalog rows.
+        getPreferences(MODE_PRIVATE).edit().remove("reducedMotion").apply();
+        hideOverscroll = getPreferences(MODE_PRIVATE).getBoolean("hideOverscroll", true);
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
@@ -62,7 +58,7 @@ public final class MainActivity extends Activity {
         webView.setVerticalScrollBarEnabled(false);
         // TCL C645 (Android 11): avoid Android overscroll glow and fading edges on D-pad scroll.
         // These effects do not belong to Lampa content and add extra view invalidations.
-        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.setOverScrollMode(hideOverscroll ? View.OVER_SCROLL_NEVER : View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         webView.setVerticalFadingEdgeEnabled(false);
         webView.setHorizontalFadingEdgeEnabled(false);
         WebSettings settings = webView.getSettings();
@@ -74,9 +70,7 @@ public final class MainActivity extends Activity {
         settings.setSupportZoom(false);
         // Keep the platform's default GPU layer, cache policy and renderer scheduling.
         webView.setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView view, String url) {
-                applyReducedMotion();
-            }
+
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) {
                     Toast.makeText(MainActivity.this, "Не удалось загрузить Lampa. Проверьте сеть.", Toast.LENGTH_LONG).show();
@@ -132,18 +126,32 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void applyReducedMotion() {
-        if (webView == null) return;
-        // Add/remove a single optional CSS rule; no repeated timer or RAF loop.
-        String css = MOTION_CSS.replace("\\", "\\\\").replace("'", "\\'");
-        String js = "(function(){var id='" + MOTION_STYLE_ID + "';"
-                + "var el=document.getElementById(id);"
-                + (reducedMotion
-                    ? "if(!el){el=document.createElement('style');el.id=id;el.textContent='" + css
-                            + "';(document.head||document.documentElement).appendChild(el);}"
-                    : "if(el){el.remove();}")
-                + "})()";
-        webView.evaluateJavascript(js, null);
+    private void showSettings() {
+        if (isFinishing()) return;
+        String[] options = {
+                "Системный эффект прокрутки: " + (hideOverscroll ? "выключен" : "включён"),
+                "Перезагрузить страницу Lampa",
+                "Закрыть"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("Lampa Lite TV 1.5 — настройки")
+                .setMessage("Анимации каталога работают в обычном режиме.\n"
+                        + "Удерживайте «Назад» около секунды, чтобы открыть это меню.")
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) {
+                        hideOverscroll = !hideOverscroll;
+                        getPreferences(MODE_PRIVATE).edit()
+                                .putBoolean("hideOverscroll", hideOverscroll).apply();
+                        if (webView != null) {
+                            webView.setOverScrollMode(hideOverscroll
+                                    ? View.OVER_SCROLL_NEVER : View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+                        }
+                        Toast.makeText(this, "Настройка прокрутки обновлена", Toast.LENGTH_SHORT).show();
+                    } else if (which == 1 && webView != null) {
+                        webView.reload();
+                    }
+                })
+                .show();
     }
 
     private void setFullscreen() {
@@ -174,24 +182,32 @@ public final class MainActivity extends Activity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        // One toggle per MENU hold, even if the remote sends repeated key-down events.
-        if (event.getKeyCode() == KeyEvent.KEYCODE_MENU && event.getAction() == KeyEvent.ACTION_UP) {
-            if (menuLongPressHandled) {
-                menuLongPressHandled = false;
+        // The TCL remote has BACK even when it has no MENU key.
+        // A short BACK retains the existing WebView back behavior.
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                backHeld = true;
+                if (event.isLongPress() && !settingsOpenedForBack) {
+                    settingsOpenedForBack = true;
+                    showSettings();
+                }
                 return true;
             }
-        }
-        if (event.getKeyCode() == KeyEvent.KEYCODE_MENU
-                && event.getAction() == KeyEvent.ACTION_DOWN && event.isLongPress()) {
-            if (menuLongPressHandled) return true;
-            menuLongPressHandled = true;
-            reducedMotion = !reducedMotion;
-            getPreferences(MODE_PRIVATE).edit().putBoolean("reducedMotion", reducedMotion).apply();
-            applyReducedMotion();
-            Toast.makeText(this, reducedMotion ? "Анимации сокращены" : "Обычные анимации",
-                    Toast.LENGTH_SHORT).show();
-            Log.i(TAG, "reducedMotion=" + reducedMotion);
-            return true;
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                boolean alreadyOpened = settingsOpenedForBack;
+                boolean openSettings = alreadyOpened
+                        || (backHeld && event.getEventTime() - event.getDownTime() >= 850);
+                backHeld = false;
+                settingsOpenedForBack = false;
+                if (openSettings) {
+                    if (!alreadyOpened && !event.isCanceled() && !isFinishing()) {
+                        showSettings();
+                    }
+                } else if (!event.isCanceled()) {
+                    onBackPressed();
+                }
+                return true;
+            }
         }
         return super.dispatchKeyEvent(event);
     }
