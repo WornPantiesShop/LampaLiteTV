@@ -24,7 +24,6 @@
             if (action === 'settings' || action === 'shots' || action === 'shorts'
                     || shotsIcon || ['shots', 'shorts', 'шортс'].includes(title)) item.remove();
         });
-        document.querySelectorAll('.head .open--settings').forEach(item => item.remove());
         if (!document.querySelector('[data-action="lampa-lite-russian"]')) {
             const item = Lampa.Menu.addButton(icon, 'Русские', () => {
                 Lampa.Select.show({
