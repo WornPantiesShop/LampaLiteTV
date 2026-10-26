@@ -32,6 +32,7 @@ public final class MainActivity extends Activity {
     private static final String TAG = "LampaLiteTV";
     private static final String START_URL = "http://lampa.mx";
     private String logoCompositorScript;
+    private String defaultExtensionsScript;
     private FrameLayout root;
     private WebView webView;
     private View videoView;
@@ -51,7 +52,8 @@ public final class MainActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
-        logoCompositorScript = readLogoCompositorScript();
+        logoCompositorScript = readPageScript("logo-compositor.js");
+        defaultExtensionsScript = readPageScript("default-extensions.js");
         createWebView(state);
     }
 
@@ -79,11 +81,11 @@ public final class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
 
             @Override public void onPageCommitVisible(WebView view, String url) {
-                applyLogoCompositor(view);
+                applyPageEnhancements(view);
             }
 
             @Override public void onPageFinished(WebView view, String url) {
-                applyLogoCompositor(view);
+                applyPageEnhancements(view);
             }
 
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
@@ -141,21 +143,22 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private String readLogoCompositorScript() {
-        try (InputStream input = getAssets().open("logo-compositor.js");
+    private String readPageScript(String assetName) {
+        try (InputStream input = getAssets().open(assetName);
                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[2048];
             int count;
             while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
             return new String(output.toByteArray(), StandardCharsets.UTF_8);
         } catch (IOException error) {
-            Log.w(TAG, "Logo compositor unavailable; using original page", error);
+            Log.w(TAG, "Page enhancement unavailable: " + assetName, error);
             return null;
         }
     }
 
-    private void applyLogoCompositor(WebView view) {
+    private void applyPageEnhancements(WebView view) {
         if (logoCompositorScript != null) view.evaluateJavascript(logoCompositorScript, null);
+        if (defaultExtensionsScript != null) view.evaluateJavascript(defaultExtensionsScript, null);
     }
 
     private void showSettings() {
