@@ -199,7 +199,7 @@ public final class MainActivity extends Activity {
                 String body = request.optString("body", "");
                 if (!allowedRezkaUrl(uri) || uri.toString().length() > 8192 || body.length() > 65536
                         || !("GET".equals(method) || ("POST".equals(method)
-                            && ("/ajax/login/".equals(uri.getPath()) || "/ajax/get_cdn_series/".equals(uri.getPath()))))) {
+                            && ("/ajax/login/".equals(uri.getPath()) || "/ajax/get_cdn_series/".equals(uri.getPath()) || "/engine/ajax/search.php".equals(uri.getPath()))))) {
                     finishRezkaRequest(id, new JSONObject().put("status", 403).put("body", ""));
                     return;
                 }
