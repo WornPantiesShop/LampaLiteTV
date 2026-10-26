@@ -10,8 +10,8 @@ android {
         applicationId 'com.example.lampalitetv'
         minSdk 26
         targetSdk 28
-        versionCode 8
-        versionName '1.5.2-c645'
+        versionCode 9
+        versionName '1.5.3-c645'
     }
 
     lint {

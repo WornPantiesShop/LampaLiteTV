@@ -22,10 +22,16 @@ import android.webkit.RenderProcessGoneDetail;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
 /** Minimal Android TV WebView host; no forced frame loop, layer type or Chromium flags. */
 public final class MainActivity extends Activity {
     private static final String TAG = "LampaLiteTV";
     private static final String START_URL = "http://lampa.mx";
+    private String logoCompositorScript;
     private FrameLayout root;
     private WebView webView;
     private View videoView;
@@ -45,6 +51,7 @@ public final class MainActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
+        logoCompositorScript = readLogoCompositorScript();
         createWebView(state);
     }
 
@@ -70,6 +77,14 @@ public final class MainActivity extends Activity {
         settings.setSupportZoom(false);
         // Keep the platform's default GPU layer, cache policy and renderer scheduling.
         webView.setWebViewClient(new WebViewClient() {
+
+            @Override public void onPageCommitVisible(WebView view, String url) {
+                applyLogoCompositor(view);
+            }
+
+            @Override public void onPageFinished(WebView view, String url) {
+                applyLogoCompositor(view);
+            }
 
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) {
@@ -124,6 +139,23 @@ public final class MainActivity extends Activity {
         if (state == null || webView.restoreState(state) == null) {
             webView.loadUrl(START_URL);
         }
+    }
+
+    private String readLogoCompositorScript() {
+        try (InputStream input = getAssets().open("logo-compositor.js");
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[2048];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
+        } catch (IOException error) {
+            Log.w(TAG, "Logo compositor unavailable; using original page", error);
+            return null;
+        }
+    }
+
+    private void applyLogoCompositor(WebView view) {
+        if (logoCompositorScript != null) view.evaluateJavascript(logoCompositorScript, null);
     }
 
     private void showSettings() {
