@@ -38,10 +38,22 @@
             if (series) series.after(item[0]);
         }
     }
+    function removeShotsSettings() {
+        Lampa.SettingsApi.removeComponent('shots');
+        Lampa.Settings.main().render().find('[data-component="shots"]').remove();
+        const rows = Lampa.SettingsApi.getParam('content_rows') || [];
+        for (let i = rows.length - 1; i >= 0; i--) {
+            if (rows[i].param?.name === 'content_rows_shots_main') rows.splice(i, 1);
+        }
+        document.querySelectorAll('.settings-folder[data-component="shots"], .settings-param[data-name="content_rows_shots_main"]')
+            .forEach(item => item.remove());
+    }
     function install() {
         prune();
+        removeShotsSettings();
+        Lampa.Settings.listener.follow('open', removeShotsSettings);
         const observer = new MutationObserver(prune);
-        for (const root of document.querySelectorAll('.menu, .head')) {
+        for (const root of document.querySelectorAll('.menu')) {
             observer.observe(root, {childList: true, subtree: true});
             if (root.parentNode) observer.observe(root.parentNode, {childList: true});
         }

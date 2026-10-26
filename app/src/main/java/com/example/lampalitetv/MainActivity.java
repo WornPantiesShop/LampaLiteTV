@@ -25,6 +25,12 @@ import android.widget.Toast;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import android.webkit.CookieManager;
+import org.json.JSONObject;
+import org.json.JSONTokener;
 import java.nio.charset.StandardCharsets;
 
 /** Minimal Android TV WebView host; no forced frame loop, layer type or Chromium flags. */
@@ -34,6 +40,10 @@ public final class MainActivity extends Activity {
     private String logoCompositorScript;
     private String defaultExtensionsScript;
     private String catalogCustomizationScript;
+    private String rezkaTransportScript;
+    private final ExecutorService rezkaWorker = new java.util.concurrent.ThreadPoolExecutor(
+            1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+            new java.util.concurrent.ArrayBlockingQueue<>(16));
     private FrameLayout root;
     private WebView webView;
     private View videoView;
@@ -54,6 +64,7 @@ public final class MainActivity extends Activity {
         logoCompositorScript = readPageScript("logo-compositor.js");
         defaultExtensionsScript = readPageScript("default-extensions.js");
         catalogCustomizationScript = readPageScript("catalog-customization.js");
+        rezkaTransportScript = readPageScript("rezka-transport.js");
         createWebView(state);
     }
 
@@ -96,6 +107,13 @@ public final class MainActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String scheme = uri.getScheme();
+                if ("lampalite".equals(scheme) && "rezka-request".equals(uri.getHost())) {
+                    Uri page = Uri.parse(view.getUrl() == null ? "" : view.getUrl());
+                    String id = uri.getQueryParameter("id");
+                    if (request.isForMainFrame() && "lampa.mx".equals(page.getHost())
+                            && id != null && id.matches("[a-f0-9]{32}")) startRezkaRequest(id);
+                    return true;
+                }
                 // Keep all HTTP(S) navigation inside the same WebView.
                 if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) return false;
                 // Only delegate recognised media-app deep link protocols. No intent:// arbitrary fallback.
@@ -160,6 +178,133 @@ public final class MainActivity extends Activity {
         if (logoCompositorScript != null) view.evaluateJavascript(logoCompositorScript, null);
         if (defaultExtensionsScript != null) view.evaluateJavascript(defaultExtensionsScript, null);
         if (catalogCustomizationScript != null) view.evaluateJavascript(catalogCustomizationScript, null);
+        if (rezkaTransportScript != null) view.evaluateJavascript(rezkaTransportScript, null);
+    }
+
+    private static boolean allowedRezkaUrl(Uri uri) {
+        return "https".equals(uri.getScheme()) && uri.getUserInfo() == null && uri.getPort() == -1
+                && ("kvk.zone".equals(uri.getHost()) || "rezka.ag".equals(uri.getHost()));
+    }
+
+    private void startRezkaRequest(String id) {
+        if (webView == null || isFinishing() || rezkaWorker.isShutdown()) return;
+        webView.evaluateJavascript("JSON.stringify(window.__lampaLiteRezkaTransport?.take('" + id + "'))", value -> {
+            if (isFinishing() || rezkaWorker.isShutdown()) return;
+            try {
+                Object encoded = new JSONTokener(value).nextValue();
+                if (!(encoded instanceof String)) return;
+                JSONObject request = new JSONObject((String) encoded);
+                Uri uri = Uri.parse(request.getString("url"));
+                String method = request.optString("method", "GET");
+                String body = request.optString("body", "");
+                if (!allowedRezkaUrl(uri) || uri.toString().length() > 8192 || body.length() > 65536
+                        || !("GET".equals(method) || ("POST".equals(method)
+                            && ("/ajax/login/".equals(uri.getPath()) || "/ajax/get_cdn_series/".equals(uri.getPath()))))) {
+                    finishRezkaRequest(id, new JSONObject().put("status", 403).put("body", ""));
+                    return;
+                }
+                rezkaWorker.execute(() -> {
+                    JSONObject response = new JSONObject();
+                    try {
+                        String currentUrl = uri.toString();
+                        String currentMethod = method;
+                        String currentBody = body;
+                        JSONObject headers = request.optJSONObject("headers");
+                        for (int redirect = 0; redirect < 5; redirect++) {
+                            Uri current = Uri.parse(currentUrl);
+                            if (!allowedRezkaUrl(current)) throw new java.io.IOException("Rejected destination");
+                            HttpURLConnection connection = (HttpURLConnection) new URL(currentUrl).openConnection();
+                            try {
+                                connection.setInstanceFollowRedirects(false);
+                                connection.setConnectTimeout(8000);
+                                connection.setReadTimeout(8000);
+                                connection.setRequestMethod(currentMethod);
+                                connection.setRequestProperty("Origin", "https://" + current.getHost());
+                                connection.setRequestProperty("Referer", "https://" + current.getHost() + "/");
+                                String cookies = CookieManager.getInstance().getCookie(currentUrl);
+                                String explicitCookies = headers == null ? "" : headers.optString("Cookie");
+                                if (!explicitCookies.isEmpty()) {
+                                    if (explicitCookies.length() > 16384 || explicitCookies.indexOf('\r') >= 0 || explicitCookies.indexOf('\n') >= 0)
+                                        throw new java.io.IOException("Invalid cookie header");
+                                    cookies = explicitCookies;
+                                }
+                                if (cookies != null && !("POST".equals(currentMethod) && "/ajax/login/".equals(current.getPath())))
+                                    connection.setRequestProperty("Cookie", cookies);
+                                if (headers != null) {
+                                    for (String key : new String[]{"User-Agent", "Content-Type", "X-Requested-With"}) {
+                                        String header = headers.optString(key);
+                                        if (!header.isEmpty() && header.indexOf('\r') < 0 && header.indexOf('\n') < 0)
+                                            connection.setRequestProperty(key, header);
+                                    }
+                                }
+                                if ("POST".equals(currentMethod)) {
+                                    connection.setRequestProperty("X-Requested-With", "XMLHttpRequest");
+                                    if (connection.getRequestProperty("Content-Type") == null)
+                                        connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+                                    byte[] data = currentBody.getBytes(StandardCharsets.UTF_8);
+                                    connection.setDoOutput(true);
+                                    connection.setFixedLengthStreamingMode(data.length);
+                                    try (java.io.OutputStream output = connection.getOutputStream()) { output.write(data); }
+                                }
+                                int status = connection.getResponseCode();
+                                for (java.util.Map.Entry<String, java.util.List<String>> header : connection.getHeaderFields().entrySet()) {
+                                    if ("set-cookie".equalsIgnoreCase(header.getKey())) {
+                                        for (String cookie : header.getValue()) CookieManager.getInstance().setCookie(currentUrl, cookie);
+                                    }
+                                }
+                                String location = connection.getHeaderField("Location");
+                                if (status >= 300 && status < 400 && location != null) {
+                                    currentUrl = new URL(new URL(currentUrl), location).toString();
+                                    if (status == 303 || ((status == 301 || status == 302) && "POST".equals(currentMethod))) {
+                                        currentMethod = "GET";
+                                        currentBody = "";
+                                    }
+                                    continue;
+                                }
+                                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                                InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                                if (stream != null) {
+                                    java.io.PushbackInputStream sniff = new java.io.PushbackInputStream(stream, 2);
+                                    int first = sniff.read();
+                                    int second = sniff.read();
+                                    if (second != -1) sniff.unread(second);
+                                    if (first != -1) sniff.unread(first);
+                                    try (InputStream input = first == 0x1f && second == 0x8b
+                                            ? new java.util.zip.GZIPInputStream(sniff) : sniff) {
+                                    byte[] buffer = new byte[8192]; int count;
+                                    while ((count = input.read(buffer)) != -1) {
+                                        if (bytes.size() + count > 4 * 1024 * 1024) throw new java.io.IOException("Response too large");
+                                        bytes.write(buffer, 0, count);
+                                    }
+                                    }
+                                }
+                                response.put("status", status);
+                                response.put("body", new String(bytes.toByteArray(), StandardCharsets.UTF_8));
+                                response.put("cookies", CookieManager.getInstance().getCookie(currentUrl));
+                                break;
+                            } finally { connection.disconnect(); }
+                        }
+                        CookieManager.getInstance().flush();
+                        if (!response.has("status")) response.put("status", 502).put("body", "");
+                    } catch (Exception ignored) {
+                        // Do not log account data, request bodies, cookies or responses.
+                        try { response.put("status", 502).put("body", ""); } catch (Exception unused) { }
+                    }
+                    JSONObject result = response;
+                    runOnUiThread(() -> finishRezkaRequest(id, result));
+                });
+            } catch (Exception ignored) {
+                try { finishRezkaRequest(id, new JSONObject().put("status", 400).put("body", "")); } catch (Exception unused) { }
+            }
+        });
+    }
+
+    private void finishRezkaRequest(String id, JSONObject response) {
+        if (webView != null && !isFinishing()) {
+            Uri page = Uri.parse(webView.getUrl() == null ? "" : webView.getUrl());
+            if ("lampa.mx".equals(page.getHost()))
+                webView.evaluateJavascript("window.__lampaLiteRezkaTransport?.finish('" + id + "'," + response + ")", null);
+        }
     }
 
     private void setFullscreen() {
@@ -229,6 +374,7 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(out);
     }
     @Override protected void onDestroy() {
+        rezkaWorker.shutdownNow();
         if (videoView != null) exitVideo();
         if (webView != null) {
             root.removeView(webView);
