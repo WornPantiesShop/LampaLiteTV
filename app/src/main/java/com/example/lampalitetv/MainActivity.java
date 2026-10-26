@@ -33,13 +33,12 @@ public final class MainActivity extends Activity {
     private static final String START_URL = "http://lampa.mx";
     private String logoCompositorScript;
     private String defaultExtensionsScript;
+    private String catalogCustomizationScript;
     private FrameLayout root;
     private WebView webView;
     private View videoView;
     private WebChromeClient.CustomViewCallback videoCallback;
     private boolean hideOverscroll = true;
-    private boolean backHeld = false;
-    private boolean settingsOpenedForBack = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override public void onCreate(Bundle state) {
@@ -54,6 +53,7 @@ public final class MainActivity extends Activity {
         setContentView(root);
         logoCompositorScript = readPageScript("logo-compositor.js");
         defaultExtensionsScript = readPageScript("default-extensions.js");
+        catalogCustomizationScript = readPageScript("catalog-customization.js");
         createWebView(state);
     }
 
@@ -159,33 +159,7 @@ public final class MainActivity extends Activity {
     private void applyPageEnhancements(WebView view) {
         if (logoCompositorScript != null) view.evaluateJavascript(logoCompositorScript, null);
         if (defaultExtensionsScript != null) view.evaluateJavascript(defaultExtensionsScript, null);
-    }
-
-    private void showSettings() {
-        if (isFinishing()) return;
-        String[] options = {
-                "Системный эффект прокрутки: " + (hideOverscroll ? "выключен" : "включён"),
-                "Перезагрузить страницу Lampa",
-                "Закрыть"
-        };
-        new AlertDialog.Builder(this)
-                // Android AlertDialog cannot show setMessage and setItems together reliably.
-                .setTitle("Lampa Lite TV — настройки")
-                .setItems(options, (dialog, which) -> {
-                    if (which == 0) {
-                        hideOverscroll = !hideOverscroll;
-                        getPreferences(MODE_PRIVATE).edit()
-                                .putBoolean("hideOverscroll", hideOverscroll).apply();
-                        if (webView != null) {
-                            webView.setOverScrollMode(hideOverscroll
-                                    ? View.OVER_SCROLL_NEVER : View.OVER_SCROLL_IF_CONTENT_SCROLLS);
-                        }
-                        Toast.makeText(this, "Настройка прокрутки обновлена", Toast.LENGTH_SHORT).show();
-                    } else if (which == 1 && webView != null) {
-                        webView.reload();
-                    }
-                })
-                .show();
+        if (catalogCustomizationScript != null) view.evaluateJavascript(catalogCustomizationScript, null);
     }
 
     private void setFullscreen() {
@@ -216,32 +190,11 @@ public final class MainActivity extends Activity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        // The TCL remote has BACK even when it has no MENU key.
-        // A short BACK retains the existing WebView back behavior.
+        // Keep a single native BACK action; do not dispatch it to WebView twice.
+        // Long BACK no longer opens a settings dialog.
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                backHeld = true;
-                if (event.isLongPress() && !settingsOpenedForBack) {
-                    settingsOpenedForBack = true;
-                    showSettings();
-                }
-                return true;
-            }
-            if (event.getAction() == KeyEvent.ACTION_UP) {
-                boolean alreadyOpened = settingsOpenedForBack;
-                boolean openSettings = alreadyOpened
-                        || (backHeld && event.getEventTime() - event.getDownTime() >= 850);
-                backHeld = false;
-                settingsOpenedForBack = false;
-                if (openSettings) {
-                    if (!alreadyOpened && !event.isCanceled() && !isFinishing()) {
-                        showSettings();
-                    }
-                } else if (!event.isCanceled()) {
-                    onBackPressed();
-                }
-                return true;
-            }
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) onBackPressed();
+            return true;
         }
         return super.dispatchKeyEvent(event);
     }
