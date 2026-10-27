@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
     private String playerSelectionScript;
     private String torrentPreflightScript;
     private String menuSubmenusScript;
+    private String searchKeyboardScript;
     private final ExecutorService rezkaWorker = new java.util.concurrent.ThreadPoolExecutor(
             1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
             new java.util.concurrent.ArrayBlockingQueue<>(16));
@@ -71,6 +72,7 @@ public final class MainActivity extends Activity {
         playerSelectionScript = readPageScript("player-selection.js");
         torrentPreflightScript = readPageScript("torrent-preflight.js");
         menuSubmenusScript = readPageScript("menu-submenus.js");
+        searchKeyboardScript = readPageScript("search-keyboard.js");
         createWebView(state);
     }
 
@@ -213,6 +215,7 @@ public final class MainActivity extends Activity {
         if (playerSelectionScript != null) view.evaluateJavascript(playerSelectionScript, null);
         if (torrentPreflightScript != null) view.evaluateJavascript(torrentPreflightScript, null);
         if (menuSubmenusScript != null) view.evaluateJavascript(menuSubmenusScript, null);
+        if (searchKeyboardScript != null) view.evaluateJavascript(searchKeyboardScript, null);
     }
 
     private void openExternalPlayer(String id) {
@@ -410,8 +413,8 @@ public final class MainActivity extends Activity {
     @Override public void onBackPressed() {
         if (videoView != null) exitVideo();
         else if (webView != null) {
-            // BACK cancels an active preflight instead of navigating away behind it.
-            webView.evaluateJavascript("Boolean(window.__lampaLitePreflight?.cancel() || window.__lampaLiteMenu?.back())", handled -> {
+            // Let active app overlays handle BACK before navigating WebView history.
+            webView.evaluateJavascript("Boolean(window.__lampaLitePreflight?.cancel() || window.__lampaLiteMenu?.back() || window.__lampaLiteSearchKeyboard?.back())", handled -> {
                 if (!"true".equals(handled)) navigateBack();
             });
         } else super.onBackPressed();
