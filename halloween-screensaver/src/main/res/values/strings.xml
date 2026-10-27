@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Хэллоуин — за стеклом</string>
+    <string name="description">Zombies и Ghosts in the Wall. Локальные анимированные заставки без звука и интернета. Кнопка пульта закрывает просмотр.</string>
+    <string name="preview">Посмотреть заставку</string>
+    <string name="mode_alternate">Видео: чередовать обе заставки</string>
+    <string name="mode_ghosts">Видео: Ghosts in the Wall</string>
+    <string name="mode_zombies">Видео: Zombies 4K</string>
+    <string name="choose">Выбрать заставку телевизора</string>
+    <string name="video_error">Не удалось запустить видео. Нажмите «Назад» и повторите.</string>
+    <string name="settings_unavailable">Откройте настройки телевизора → Система → Заставка и выберите «Хэллоуин — за стеклом».</string>
+</resources>

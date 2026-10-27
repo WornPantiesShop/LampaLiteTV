@@ -1,0 +1,30 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.example.hauntedscreen'
+    compileSdk 35
+    aaptOptions { noCompress 'mp4' }
+    defaultConfig {
+        applicationId 'com.example.hauntedscreen'
+        minSdk 26
+        targetSdk 28
+        versionCode 1
+        versionName '1.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Do not silently build a screensaver without the locally downloaded clips.
+tasks.register('verifyWallpapers') {
+    doLast {
+        ['ghosts-wall.mp4', 'zombies.mp4'].each { name ->
+            def clip = file("src/main/assets/${name}")
+            if (!clip.isFile() || clip.length() < 10000) {
+                throw new GradleException('Download personal wallpaper clips first: powershell -File halloween-screensaver/get-wallpapers.ps1')
+            }
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'verifyWallpapers' }

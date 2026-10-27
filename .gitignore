@@ -7,3 +7,6 @@ build/
 
 __pycache__/
 diagnostics/
+
+# Personal wallpaper clips downloaded from their original publishers.
+/halloween-screensaver/src/main/assets/*.mp4
