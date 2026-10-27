@@ -73,6 +73,17 @@
     document.head.append(style);
     function init() {
         if (!window.Lampa?.Search?.listener || !Lampa.Controller?.listener) return setTimeout(init, 250);
+        // Filter only the keyboard's language picker, not interface or content languages.
+        const show = Lampa.Select.show;
+        Lampa.Select.show = function (params) {
+            if (params?.title === Lampa.Lang.translate('title_choice_language')
+                    && Array.isArray(params.items)
+                    && ['default', 'uk', 'en'].every(code => params.items.some(item => item.value === code))) {
+                params = Object.assign({}, params, {items: ['default', 'uk', 'en']
+                    .map(code => params.items.find(item => item.value === code))});
+            }
+            return show.apply(this, [params, ...Array.prototype.slice.call(arguments, 1)]);
+        };
         Lampa.Search.listener.follow('open', mount);
         Lampa.Search.listener.follow('close', unmount);
         Lampa.Controller.listener.follow('toggle', patchController);

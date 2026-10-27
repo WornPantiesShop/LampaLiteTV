@@ -37,14 +37,8 @@ import java.nio.charset.StandardCharsets;
 public final class MainActivity extends Activity {
     private static final String TAG = "LampaLiteTV";
     private static final String START_URL = "http://lampa.mx";
-    private String logoCompositorScript;
-    private String defaultExtensionsScript;
-    private String catalogCustomizationScript;
-    private String rezkaTransportScript;
-    private String playerSelectionScript;
-    private String torrentPreflightScript;
-    private String menuSubmenusScript;
-    private String searchKeyboardScript;
+    private String pageEnhancementsScript;
+    private boolean pageEnhancementsApplied;
     private final ExecutorService rezkaWorker = new java.util.concurrent.ThreadPoolExecutor(
             1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
             new java.util.concurrent.ArrayBlockingQueue<>(16));
@@ -65,14 +59,18 @@ public final class MainActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
-        logoCompositorScript = readPageScript("logo-compositor.js");
-        defaultExtensionsScript = readPageScript("default-extensions.js");
-        catalogCustomizationScript = readPageScript("catalog-customization.js");
-        rezkaTransportScript = readPageScript("rezka-transport.js");
-        playerSelectionScript = readPageScript("player-selection.js");
-        torrentPreflightScript = readPageScript("torrent-preflight.js");
-        menuSubmenusScript = readPageScript("menu-submenus.js");
-        searchKeyboardScript = readPageScript("search-keyboard.js");
+        StringBuilder enhancements = new StringBuilder();
+        for (String asset : new String[] {"logo-compositor.js", "default-extensions.js",
+                "catalog-customization.js", "rezka-transport.js", "player-selection.js",
+                "torrent-preflight.js", "menu-submenus.js", "search-keyboard.js"}) {
+            String script = readPageScript(asset);
+            if (script != null) {
+                // Isolate optional enhancements so one failure cannot skip the others.
+                enhancements.append("try {\n").append(script)
+                        .append("\n} catch (e) { console.warn('Lampa Lite enhancement unavailable'); }\n");
+            }
+        }
+        pageEnhancementsScript = enhancements.toString();
         createWebView(state);
     }
 
@@ -80,6 +78,7 @@ public final class MainActivity extends Activity {
     private void createWebView(Bundle state) {
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0)
             WebView.setWebContentsDebuggingEnabled(true);
+        pageEnhancementsApplied = false;
         webView = new WebView(this);
         webView.setBackgroundColor(Color.BLACK);
         webView.setFocusable(true);
@@ -115,6 +114,10 @@ public final class MainActivity extends Activity {
                             new java.io.ByteArrayInputStream(new byte[0]));
                 }
                 return super.shouldInterceptRequest(view, request);
+            }
+
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                pageEnhancementsApplied = false;
             }
 
             @Override public void onPageCommitVisible(WebView view, String url) {
@@ -208,14 +211,11 @@ public final class MainActivity extends Activity {
     }
 
     private void applyPageEnhancements(WebView view) {
-        if (logoCompositorScript != null) view.evaluateJavascript(logoCompositorScript, null);
-        if (defaultExtensionsScript != null) view.evaluateJavascript(defaultExtensionsScript, null);
-        if (catalogCustomizationScript != null) view.evaluateJavascript(catalogCustomizationScript, null);
-        if (rezkaTransportScript != null) view.evaluateJavascript(rezkaTransportScript, null);
-        if (playerSelectionScript != null) view.evaluateJavascript(playerSelectionScript, null);
-        if (torrentPreflightScript != null) view.evaluateJavascript(torrentPreflightScript, null);
-        if (menuSubmenusScript != null) view.evaluateJavascript(menuSubmenusScript, null);
-        if (searchKeyboardScript != null) view.evaluateJavascript(searchKeyboardScript, null);
+        if (pageEnhancementsApplied || pageEnhancementsScript == null
+                || !"lampa.mx".equals(Uri.parse(view.getUrl() == null ? "" : view.getUrl()).getHost())) return;
+        pageEnhancementsApplied = true;
+        // One native-to-renderer call per document; scripts retain their own ready hooks.
+        view.evaluateJavascript(pageEnhancementsScript, null);
     }
 
     private void openExternalPlayer(String id) {
