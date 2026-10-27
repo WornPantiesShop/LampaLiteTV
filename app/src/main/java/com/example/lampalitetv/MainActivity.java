@@ -41,6 +41,7 @@ public final class MainActivity extends Activity {
     private String defaultExtensionsScript;
     private String catalogCustomizationScript;
     private String rezkaTransportScript;
+    private String playerSelectionScript;
     private final ExecutorService rezkaWorker = new java.util.concurrent.ThreadPoolExecutor(
             1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
             new java.util.concurrent.ArrayBlockingQueue<>(16));
@@ -65,11 +66,14 @@ public final class MainActivity extends Activity {
         defaultExtensionsScript = readPageScript("default-extensions.js");
         catalogCustomizationScript = readPageScript("catalog-customization.js");
         rezkaTransportScript = readPageScript("rezka-transport.js");
+        playerSelectionScript = readPageScript("player-selection.js");
         createWebView(state);
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private void createWebView(Bundle state) {
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0)
+            WebView.setWebContentsDebuggingEnabled(true);
         webView = new WebView(this);
         webView.setBackgroundColor(Color.BLACK);
         webView.setFocusable(true);
@@ -107,6 +111,13 @@ public final class MainActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String scheme = uri.getScheme();
+                if ("lampalite".equals(scheme) && "player-request".equals(uri.getHost())) {
+                    Uri page = Uri.parse(view.getUrl() == null ? "" : view.getUrl());
+                    String id = uri.getQueryParameter("id");
+                    if (request.isForMainFrame() && "lampa.mx".equals(page.getHost())
+                            && id != null && id.matches("[a-f0-9]{32}")) openExternalPlayer(id);
+                    return true;
+                }
                 if ("lampalite".equals(scheme) && "rezka-request".equals(uri.getHost())) {
                     Uri page = Uri.parse(view.getUrl() == null ? "" : view.getUrl());
                     String id = uri.getQueryParameter("id");
@@ -179,6 +190,36 @@ public final class MainActivity extends Activity {
         if (defaultExtensionsScript != null) view.evaluateJavascript(defaultExtensionsScript, null);
         if (catalogCustomizationScript != null) view.evaluateJavascript(catalogCustomizationScript, null);
         if (rezkaTransportScript != null) view.evaluateJavascript(rezkaTransportScript, null);
+        if (playerSelectionScript != null) view.evaluateJavascript(playerSelectionScript, null);
+    }
+
+    private void openExternalPlayer(String id) {
+        webView.evaluateJavascript("JSON.stringify(window.__lampaLitePlayer?.take('" + id + "'))", value -> {
+            boolean fallback = false;
+            try {
+                Object encoded = new JSONTokener(value).nextValue();
+                if (!(encoded instanceof String)) return;
+                JSONObject media = new JSONObject((String) encoded);
+                String url = media.getString("url");
+                Uri uri = Uri.parse(url);
+                if (url.length() > 32768 || uri.getHost() == null || uri.getUserInfo() != null
+                        || !("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))) return;
+                Intent video = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/*");
+                String title = media.optString("title", "Видео");
+                video.putExtra("title", title.substring(0, Math.min(title.length(), 512)));
+                if (getPackageManager().queryIntentActivities(video, 0).isEmpty()) {
+                    Toast.makeText(this, "Внешний видеоплеер не установлен. Открываю встроенный.", Toast.LENGTH_LONG).show();
+                    fallback = true;
+                } else startActivity(Intent.createChooser(video, "Выберите видеоплеер"));
+            } catch (Exception error) {
+                // Do not log stream URLs or exceptions containing credentials.
+                Toast.makeText(this, "Не удалось открыть внешний плеер", Toast.LENGTH_SHORT).show();
+                fallback = true;
+            } finally {
+                if (webView != null && "lampa.mx".equals(Uri.parse(webView.getUrl() == null ? "" : webView.getUrl()).getHost()))
+                    webView.evaluateJavascript("window.__lampaLitePlayer?.finish('" + id + "'," + fallback + ")", null);
+            }
+        });
     }
 
     private static boolean allowedRezkaUrl(Uri uri) {
