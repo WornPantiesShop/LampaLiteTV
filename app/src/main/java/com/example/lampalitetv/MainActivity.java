@@ -42,6 +42,7 @@ public final class MainActivity extends Activity {
     private String catalogCustomizationScript;
     private String rezkaTransportScript;
     private String playerSelectionScript;
+    private String torrentPreflightScript;
     private final ExecutorService rezkaWorker = new java.util.concurrent.ThreadPoolExecutor(
             1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
             new java.util.concurrent.ArrayBlockingQueue<>(16));
@@ -67,6 +68,7 @@ public final class MainActivity extends Activity {
         catalogCustomizationScript = readPageScript("catalog-customization.js");
         rezkaTransportScript = readPageScript("rezka-transport.js");
         playerSelectionScript = readPageScript("player-selection.js");
+        torrentPreflightScript = readPageScript("torrent-preflight.js");
         createWebView(state);
     }
 
@@ -86,6 +88,9 @@ public final class MainActivity extends Activity {
         webView.setVerticalFadingEdgeEnabled(false);
         webView.setHorizontalFadingEdgeEnabled(false);
         WebSettings settings = webView.getSettings();
+        // This host uses Lampa's web player plus our scoped native chooser, not AndroidJS.
+        // Identify the host so the torrent file picker does not redirect it to another APK.
+        settings.setUserAgentString(settings.getUserAgentString().replace("Android", "LampaLiteTV"));
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
@@ -204,6 +209,7 @@ public final class MainActivity extends Activity {
         if (catalogCustomizationScript != null) view.evaluateJavascript(catalogCustomizationScript, null);
         if (rezkaTransportScript != null) view.evaluateJavascript(rezkaTransportScript, null);
         if (playerSelectionScript != null) view.evaluateJavascript(playerSelectionScript, null);
+        if (torrentPreflightScript != null) view.evaluateJavascript(torrentPreflightScript, null);
     }
 
     private void openExternalPlayer(String id) {
@@ -400,7 +406,16 @@ public final class MainActivity extends Activity {
 
     @Override public void onBackPressed() {
         if (videoView != null) exitVideo();
-        else if (webView != null && webView.canGoBack()) webView.goBack();
+        else if (webView != null) {
+            // BACK cancels an active preflight instead of navigating away behind it.
+            webView.evaluateJavascript("Boolean(window.__lampaLitePreflight?.cancel())", handled -> {
+                if (!"true".equals(handled)) navigateBack();
+            });
+        } else super.onBackPressed();
+    }
+
+    private void navigateBack() {
+        if (webView != null && webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
     }
 
