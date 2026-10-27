@@ -40,6 +40,9 @@
     }
     function removeShotsSettings() {
         Lampa.SettingsApi.removeComponent('shots');
+        Lampa.SettingsApi.removeParams('shots');
+        Lampa.SettingsApi.removeComponent('shorts');
+        Lampa.SettingsApi.removeParams('shorts');
         Lampa.Settings.main().render().find('[data-component="shots"]').remove();
         const rows = Lampa.SettingsApi.getParam('content_rows') || [];
         for (let i = rows.length - 1; i >= 0; i--) {

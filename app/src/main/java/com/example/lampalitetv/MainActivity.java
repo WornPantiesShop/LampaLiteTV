@@ -94,6 +94,19 @@ public final class MainActivity extends Activity {
         settings.setSupportZoom(false);
         // Keep the platform's default GPU layer, cache policy and renderer scheduling.
         webView.setWebViewClient(new WebViewClient() {
+            @Override public android.webkit.WebResourceResponse shouldInterceptRequest(
+                    WebView view, WebResourceRequest request) {
+                // Lampa autoloads Shots independently of the visible menu/settings.
+                // Stop this module before it adds card, player and catalog hooks.
+                // Match its exact module path, including on CUB mirror hosts.
+                String path = request.getUrl().getPath();
+                if ("/plugin/shots".equals(path) || "/plugin/shots.js".equals(path)
+                        || "/plugin/shorts".equals(path) || "/plugin/shorts.js".equals(path)) {
+                    return new android.webkit.WebResourceResponse("application/javascript", "UTF-8",
+                            new java.io.ByteArrayInputStream(new byte[0]));
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
 
             @Override public void onPageCommitVisible(WebView view, String url) {
                 applyPageEnhancements(view);
