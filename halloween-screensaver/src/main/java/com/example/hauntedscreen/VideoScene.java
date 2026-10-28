@@ -11,18 +11,16 @@ import android.widget.*;
 /** Hardware-decoded local video, no WebView, network or background playback. */
 final class VideoScene extends FrameLayout implements SurfaceHolder.Callback {
     private final SurfaceView surface;
-    private final int mode;
     private MediaPlayer player;
     private boolean running, released;
-    private int index;
+    private final int index;
 
     VideoScene(Context context) { this(context, -1); }
     VideoScene(Context context, int previewIndex) {
         super(context);
         setBackgroundColor(Color.BLACK);
-        mode = previewIndex >= 0 && previewIndex <= 1 ? previewIndex + 1
-                : context.getSharedPreferences("ghost", Context.MODE_PRIVATE).getInt("mode", 1);
-        index = mode == 2 ? 1 : 0;
+        index = previewIndex >= 0 && previewIndex < Wallpapers.FILES.length ? previewIndex
+                : Wallpapers.indexForMode(context.getSharedPreferences("ghost", Context.MODE_PRIVATE).getInt("mode", 1));
         surface = new SurfaceView(context);
         surface.getHolder().addCallback(this);
         addView(surface, new LayoutParams(-1,-1));
@@ -36,7 +34,7 @@ final class VideoScene extends FrameLayout implements SurfaceHolder.Callback {
     private void play() {
         releasePlayer();
         if(!running || released) return;
-        final String clip = index == 0 ? "ghosts-wall.mp4" : "zombies.mp4";
+        final String clip = Wallpapers.FILES[index];
         MediaPlayer current = new MediaPlayer(); player = current;
         try (AssetFileDescriptor fd = getContext().getAssets().openFd(clip)) {
             current.setDataSource(fd.getFileDescriptor(), fd.getStartOffset(), fd.getLength());
