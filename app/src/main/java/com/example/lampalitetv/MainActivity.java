@@ -27,7 +27,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.concurrent.ExecutorService;
 import android.webkit.CookieManager;
 import org.json.JSONObject;
 import org.json.JSONArray;
@@ -40,9 +39,7 @@ public final class MainActivity extends Activity {
     private static final String START_URL = "http://lampa.mx";
     private String pageEnhancementsScript;
     private boolean pageEnhancementsApplied;
-    private final ExecutorService rezkaWorker = new java.util.concurrent.ThreadPoolExecutor(
-            1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
-            new java.util.concurrent.ArrayBlockingQueue<>(16));
+    private final CancelableRequestQueue rezkaRequests = new CancelableRequestQueue();
     private FrameLayout root;
     private WebView webView;
     private View videoView;
@@ -123,6 +120,7 @@ public final class MainActivity extends Activity {
 
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 pageEnhancementsApplied = false;
+                rezkaRequests.cancelAll();
             }
 
             @Override public void onPageCommitVisible(WebView view, String url) {
@@ -148,6 +146,13 @@ public final class MainActivity extends Activity {
                             && id != null && id.matches("[a-f0-9]{32}")) openExternalPlayer(id);
                     return true;
                 }
+                if ("lampalite".equals(scheme) && "rezka-cancel".equals(uri.getHost())) {
+                    Uri page = Uri.parse(view.getUrl() == null ? "" : view.getUrl());
+                    String id = uri.getQueryParameter("id");
+                    if (request.isForMainFrame() && "lampa.mx".equals(page.getHost())
+                            && id != null && id.matches("[a-f0-9]{32}")) rezkaRequests.cancel(id);
+                    return true;
+                }
                 if ("lampalite".equals(scheme) && "rezka-request".equals(uri.getHost())) {
                     Uri page = Uri.parse(view.getUrl() == null ? "" : view.getUrl());
                     String id = uri.getQueryParameter("id");
@@ -169,6 +174,7 @@ public final class MainActivity extends Activity {
             }
             @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 Log.e(TAG, "WebView renderer exited; didCrash=" + detail.didCrash());
+                rezkaRequests.cancelAll();
                 if (videoView != null) exitVideo();
                 root.removeView(view);
                 view.destroy();
@@ -329,12 +335,17 @@ public final class MainActivity extends Activity {
     }
 
     private void startRezkaRequest(String id) {
-        if (webView == null || isFinishing() || rezkaWorker.isShutdown()) return;
+        if (webView == null || isFinishing() || rezkaRequests.isShutdown()) return;
+        CancelableRequestQueue.Job reserved = rezkaRequests.reserve(id);
+        if (reserved == null) {
+            try { finishRezkaRequest(id, new JSONObject().put("status", 429).put("body", "")); } catch (Exception ignored) { }
+            return;
+        }
         webView.evaluateJavascript("JSON.stringify(window.__lampaLiteRezkaTransport?.take('" + id + "'))", value -> {
-            if (isFinishing() || rezkaWorker.isShutdown()) return;
+            if (isFinishing() || rezkaRequests.isShutdown() || reserved.isCancelled()) { reserved.cancel(); return; }
             try {
                 Object encoded = new JSONTokener(value).nextValue();
-                if (!(encoded instanceof String)) return;
+                if (!(encoded instanceof String)) { reserved.cancel(); return; }
                 JSONObject request = new JSONObject((String) encoded);
                 Uri uri = Uri.parse(request.getString("url"));
                 String method = request.optString("method", "GET");
@@ -342,10 +353,11 @@ public final class MainActivity extends Activity {
                 if (!allowedRezkaUrl(uri) || uri.toString().length() > 8192 || body.length() > 65536
                         || !("GET".equals(method) || ("POST".equals(method)
                             && ("/ajax/login/".equals(uri.getPath()) || "/ajax/get_cdn_series/".equals(uri.getPath()) || "/engine/ajax/search.php".equals(uri.getPath()))))) {
+                    reserved.cancel();
                     finishRezkaRequest(id, new JSONObject().put("status", 403).put("body", ""));
                     return;
                 }
-                rezkaWorker.execute(() -> {
+                boolean submitted = rezkaRequests.submit(reserved, job -> {
                     JSONObject response = new JSONObject();
                     try {
                         String currentUrl = uri.toString();
@@ -353,9 +365,11 @@ public final class MainActivity extends Activity {
                         String currentBody = body;
                         JSONObject headers = request.optJSONObject("headers");
                         for (int redirect = 0; redirect < 5; redirect++) {
+                            if (job.isCancelled()) return;
                             Uri current = Uri.parse(currentUrl);
                             if (!allowedRezkaUrl(current)) throw new java.io.IOException("Rejected destination");
                             HttpURLConnection connection = (HttpURLConnection) new URL(currentUrl).openConnection();
+                            if (!job.attach(connection)) return;
                             try {
                                 connection.setInstanceFollowRedirects(false);
                                 connection.setConnectTimeout(8000);
@@ -415,6 +429,7 @@ public final class MainActivity extends Activity {
                                             ? new java.util.zip.GZIPInputStream(sniff) : sniff) {
                                     byte[] buffer = new byte[8192]; int count;
                                     while ((count = input.read(buffer)) != -1) {
+                                        if (job.isCancelled()) return;
                                         if (bytes.size() + count > 4 * 1024 * 1024) throw new java.io.IOException("Response too large");
                                         bytes.write(buffer, 0, count);
                                     }
@@ -424,7 +439,7 @@ public final class MainActivity extends Activity {
                                 response.put("body", new String(bytes.toByteArray(), StandardCharsets.UTF_8));
                                 response.put("cookies", CookieManager.getInstance().getCookie(currentUrl));
                                 break;
-                            } finally { connection.disconnect(); }
+                            } finally { job.detach(connection); connection.disconnect(); }
                         }
                         CookieManager.getInstance().flush();
                         if (!response.has("status")) response.put("status", 502).put("body", "");
@@ -433,9 +448,14 @@ public final class MainActivity extends Activity {
                         try { response.put("status", 502).put("body", ""); } catch (Exception unused) { }
                     }
                     JSONObject result = response;
-                    runOnUiThread(() -> finishRezkaRequest(id, result));
+                    runOnUiThread(() -> { if (!job.isCancelled()) finishRezkaRequest(id, result); });
                 });
+                if (!submitted) {
+                    reserved.cancel();
+                    finishRezkaRequest(id, new JSONObject().put("status", 429).put("body", ""));
+                }
             } catch (Exception ignored) {
+                reserved.cancel();
                 try { finishRezkaRequest(id, new JSONObject().put("status", 400).put("body", "")); } catch (Exception unused) { }
             }
         });
@@ -527,7 +547,7 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(out);
     }
     @Override protected void onDestroy() {
-        rezkaWorker.shutdownNow();
+        rezkaRequests.close();
         if (videoView != null) exitVideo();
         if (webView != null) {
             webView.removeCallbacks(progressDelivery);

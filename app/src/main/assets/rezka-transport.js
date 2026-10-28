@@ -2,7 +2,7 @@
     'use strict';
     if (location.hostname !== 'lampa.mx' || window.__lampaLiteRezkaTransport) return;
     const requests = new Map();
-    const state = {requests: 0};
+    const state = {requests: 0, cancelled: 0, timedOut: 0};
     window.__lampaLiteRezkaTransport = state;
     state.take = id => {
         const request = requests.get(id);
@@ -10,6 +10,16 @@
         request.started = true;
         return request.data;
     };
+    state.stats = () => ({active: requests.size, inFlight: [...requests.values()].filter(r => r.started).length, requests: state.requests, cancelled: state.cancelled, timedOut: state.timedOut});
+    function cancel(id) {
+        const request = requests.get(id);
+        if (!request) return null;
+        clearTimeout(request.timer);
+        requests.delete(id);
+        state.cancelled++;
+        if (request.started) location.href = 'lampalite://rezka-cancel?id=' + id;
+        return request;
+    }
     state.finish = (id, result) => {
         const request = requests.get(id);
         if (!request) return;
@@ -62,15 +72,16 @@
                     id = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
                     requests.set(id, {data: {url: url.href, method: (options.type || 'GET').toUpperCase(), body: typeof options.data === 'string' ? options.data : '', headers: {...headers, 'User-Agent': navigator.userAgent, 'Cookie': Lampa.Storage.get('online_mod_rezka2_cookie', '')}}, complete});
                     const request = requests.get(id);
-                    request.timer = setTimeout(() => state.finish(id, {status: 504, body: ''}), 25000);
+                    request.timer = setTimeout(() => {
+                        const expired = cancel(id);
+                        if (expired) { state.timedOut++; expired.complete(504, '', {text: ''}, 'Content-Type: text/plain; charset=utf-8'); }
+                    }, 25000);
                     state.requests++;
                     // Only an opaque ID enters the URL; credentials stay in memory.
                     location.href = 'lampalite://rezka-request?id=' + id;
                 },
                 abort: () => {
-                    const request = requests.get(id);
-                    if (request) clearTimeout(request.timer);
-                    requests.delete(id);
+                    cancel(id);
                 }
             };
         });
