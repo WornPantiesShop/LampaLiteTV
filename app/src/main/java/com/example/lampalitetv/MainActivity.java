@@ -64,7 +64,7 @@ public final class MainActivity extends Activity {
         StringBuilder enhancements = new StringBuilder();
         for (String asset : new String[] {"logo-compositor.js", "default-extensions.js",
                 "catalog-customization.js", "rezka-transport.js", "player-selection.js",
-                "torrent-preflight.js", "menu-submenus.js", "search-keyboard.js", "page-icons.js"}) {
+                "torrent-preflight.js", "menu-submenus.js", "search-keyboard.js", "page-icons.js", "row-layout.js"}) {
             String script = readPageScript(asset);
             if (script != null) {
                 // Isolate optional enhancements so one failure cannot skip the others.
