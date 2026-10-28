@@ -30,6 +30,7 @@ import java.net.URL;
 import java.util.concurrent.ExecutorService;
 import android.webkit.CookieManager;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import org.json.JSONTokener;
 import java.nio.charset.StandardCharsets;
 
@@ -47,6 +48,10 @@ public final class MainActivity extends Activity {
     private View videoView;
     private WebChromeClient.CustomViewCallback videoCallback;
     private boolean hideOverscroll = true;
+    private static final int EXTERNAL_PLAYER_REQUEST = 4101;
+    private boolean progressDeliveryRunning;
+    private int progressDeliveryAttempts;
+    private final Runnable progressDelivery = this::deliverExternalProgress;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override public void onCreate(Bundle state) {
@@ -215,7 +220,7 @@ public final class MainActivity extends Activity {
                 || !"lampa.mx".equals(Uri.parse(view.getUrl() == null ? "" : view.getUrl()).getHost())) return;
         pageEnhancementsApplied = true;
         // One native-to-renderer call per document; scripts retain their own ready hooks.
-        view.evaluateJavascript(pageEnhancementsScript, null);
+        view.evaluateJavascript(pageEnhancementsScript, ignored -> deliverExternalProgress());
     }
 
     private void openExternalPlayer(String id) {
@@ -231,11 +236,23 @@ public final class MainActivity extends Activity {
                         || !("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))) return;
                 Intent video = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/*");
                 String title = media.optString("title", "Видео");
-                video.putExtra("title", title.substring(0, Math.min(title.length(), 512)));
+                String safeTitle = title.substring(0, Math.min(title.length(), 512));
+                video.putExtra("title", safeTitle);
+                video.putExtra("forcename", safeTitle);
+                video.putExtra("forceresume", false);
+                video.putExtra("startfrom", (int)Math.max(0, Math.min(Integer.MAX_VALUE, media.optLong("startMs", 0))));
                 if (getPackageManager().queryIntentActivities(video, 0).isEmpty()) {
                     Toast.makeText(this, "Внешний видеоплеер не установлен. Открываю встроенный.", Toast.LENGTH_LONG).show();
                     fallback = true;
-                } else startActivity(Intent.createChooser(video, "Выберите видеоплеер"));
+                } else {
+                    JSONObject meta = media.optJSONObject("timeline");
+                    if (meta != null && meta.optString("hash").matches("[-\\w:.]{1,128}")) {
+                        JSONObject session = new JSONObject().put("id", id).put("meta", meta);
+                        // No stream URLs or credentials are persisted. Survives host process recreation.
+                        getPreferences(MODE_PRIVATE).edit().putString("external_player_session", session.toString()).commit();
+                    } else getPreferences(MODE_PRIVATE).edit().remove("external_player_session").commit();
+                    startActivityForResult(Intent.createChooser(video, "Выберите видеоплеер"), EXTERNAL_PLAYER_REQUEST);
+                }
             } catch (Exception error) {
                 // Do not log stream URLs or exceptions containing credentials.
                 Toast.makeText(this, "Не удалось открыть внешний плеер", Toast.LENGTH_SHORT).show();
@@ -244,6 +261,65 @@ public final class MainActivity extends Activity {
                 if (webView != null && "lampa.mx".equals(Uri.parse(webView.getUrl() == null ? "" : webView.getUrl()).getHost()))
                     webView.evaluateJavascript("window.__lampaLitePlayer?.finish('" + id + "'," + fallback + ")", null);
             }
+        });
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != EXTERNAL_PLAYER_REQUEST) return;
+        String raw = getPreferences(MODE_PRIVATE).getString("external_player_session", null);
+        getPreferences(MODE_PRIVATE).edit().remove("external_player_session").commit();
+        if (raw == null) return;
+        try {
+            boolean vimu = data != null && "net.gtvbox.videoplayer.result".equals(data.getAction());
+            Bundle extras = data == null ? null : data.getExtras();
+            Object positionValue = extras == null ? null : extras.get("position");
+            Object durationValue = extras == null ? null : extras.get("duration");
+            boolean timed = positionValue instanceof Number && durationValue instanceof Number;
+            // Other players and an abandoned Android chooser must never reset progress.
+            if (resultCode == 4 || (resultCode != 0 && resultCode != 1) || (!vimu && !timed)) return;
+            long position = positionValue instanceof Number ? ((Number)positionValue).longValue() : 0;
+            long duration = durationValue instanceof Number ? ((Number)durationValue).longValue() : 0;
+            boolean completed = resultCode == 1;
+            if (position < 0 || duration < 0 || position > Integer.MAX_VALUE || duration > Integer.MAX_VALUE
+                    || (!completed && (duration <= 0 || position > duration + 60000))) return;
+            JSONObject result = new JSONObject(raw).put("positionMs", position).put("durationMs", duration).put("completed", completed);
+            JSONArray queue = new JSONArray(getPreferences(MODE_PRIVATE).getString("external_player_results", "[]"));
+            if (queue.length() >= 20) queue.remove(0);
+            queue.put(result);
+            getPreferences(MODE_PRIVATE).edit().putString("external_player_results", queue.toString()).commit();
+            Log.i(TAG, "External progress received; completed=" + completed + "; positionMs=" + position + "; durationMs=" + duration);
+            progressDeliveryAttempts = 0;
+            deliverExternalProgress();
+        } catch (Exception error) {
+            Log.w(TAG, "External progress result unavailable");
+        }
+    }
+
+    private void deliverExternalProgress() {
+        if (webView == null || isFinishing() || progressDeliveryRunning) return;
+        String queued = getPreferences(MODE_PRIVATE).getString("external_player_results", "[]");
+        if ("[]".equals(queued) || !"lampa.mx".equals(Uri.parse(webView.getUrl() == null ? "" : webView.getUrl()).getHost())) return;
+        progressDeliveryRunning = true;
+        webView.evaluateJavascript("window.__lampaLitePlayer?.applyResults(" + queued + ") || []", value -> {
+            progressDeliveryRunning = false;
+            try {
+                JSONArray acknowledged = new JSONArray(value);
+                JSONArray current = new JSONArray(getPreferences(MODE_PRIVATE).getString("external_player_results", "[]"));
+                JSONArray remaining = new JSONArray();
+                for (int i=0; i<current.length(); i++) {
+                    JSONObject result = current.getJSONObject(i);
+                    boolean done = false;
+                    for (int j=0; j<acknowledged.length(); j++) if (result.optString("id").equals(acknowledged.optString(j))) done = true;
+                    if (!done) remaining.put(result);
+                }
+                getPreferences(MODE_PRIVATE).edit().putString("external_player_results", remaining.toString()).apply();
+                if (acknowledged.length() > 0) Log.i(TAG, "External progress saved in Lampa");
+                if (remaining.length() > 0 && webView != null && ++progressDeliveryAttempts < 40) {
+                    webView.removeCallbacks(progressDelivery);
+                    webView.postDelayed(progressDelivery, 250);
+                }
+            } catch (Exception error) { Log.w(TAG, "External progress delivery deferred"); }
         });
     }
 
@@ -440,6 +516,8 @@ public final class MainActivity extends Activity {
             // Timers are process-wide: always resume before restoring page/focus.
             webView.resumeTimers();
             webView.onResume();
+            progressDeliveryAttempts = 0;
+            deliverExternalProgress();
             // Recover D-pad focus after returning from an external video player.
             if (videoView == null && !webView.hasFocus()) webView.requestFocus();
         }
@@ -452,6 +530,7 @@ public final class MainActivity extends Activity {
         rezkaWorker.shutdownNow();
         if (videoView != null) exitVideo();
         if (webView != null) {
+            webView.removeCallbacks(progressDelivery);
             root.removeView(webView);
             // Do not leave the process-wide timer state paused for the next Activity.
             webView.resumeTimers();
