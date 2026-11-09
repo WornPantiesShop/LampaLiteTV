@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -49,6 +50,9 @@ public final class MainActivity extends Activity {
     private boolean progressDeliveryRunning;
     private int progressDeliveryAttempts;
     private final Runnable progressDelivery = this::deliverExternalProgress;
+    // Long BACK press shows the exit confirmation; short BACK never closes the app.
+    private boolean backLongHandled;
+    private AlertDialog exitDialog;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override public void onCreate(Bundle state) {
@@ -498,12 +502,41 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         // Keep a single native BACK action; do not dispatch it to WebView twice.
-        // Long BACK no longer opens a settings dialog.
+        // Short BACK navigates inside Lampa and never exits the app.
+        // Holding BACK shows an exit confirmation (Yes / No).
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) onBackPressed();
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) {
+                    backLongHandled = false;
+                } else if (!backLongHandled
+                        && event.getEventTime() - event.getDownTime() >= ViewConfiguration.getLongPressTimeout()) {
+                    backLongHandled = true;
+                    showExitDialog();
+                }
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (!backLongHandled && !event.isCanceled()) onBackPressed();
+                backLongHandled = false;
+            }
             return true;
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    private void showExitDialog() {
+        if (isFinishing() || (exitDialog != null && exitDialog.isShowing())) return;
+        exitDialog = new AlertDialog.Builder(this)
+            .setTitle("Выйти?")
+            .setMessage("Закрыть приложение?")
+            .setPositiveButton("Да", (dialog, which) -> finish())
+            .setNegativeButton("Нет", null)
+            .setOnDismissListener(dialog -> { exitDialog = null; setFullscreen(); })
+            .create();
+        // Focus "No" by default so an accidental OK press does not close the app.
+        exitDialog.setOnShowListener(dialog -> {
+            android.widget.Button no = exitDialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+            if (no != null) no.requestFocus();
+        });
+        exitDialog.show();
     }
 
     @Override public void onBackPressed() {
@@ -513,12 +546,13 @@ public final class MainActivity extends Activity {
             webView.evaluateJavascript("Boolean(window.__lampaLitePreflight?.cancel() || window.__lampaLiteMenu?.back() || window.__lampaLiteSearchKeyboard?.back())", handled -> {
                 if (!"true".equals(handled)) navigateBack();
             });
-        } else super.onBackPressed();
+        }
+        // Without a WebView (e.g. renderer crashed) the restart dialog is shown; do not exit on short BACK.
     }
 
     private void navigateBack() {
+        // Nothing left to go back to: stay in the app. Exit is only via long BACK.
         if (webView != null && webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
     }
 
     @Override protected void onPause() {
@@ -547,6 +581,7 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(out);
     }
     @Override protected void onDestroy() {
+        if (exitDialog != null) { exitDialog.dismiss(); exitDialog = null; }
         rezkaRequests.close();
         if (videoView != null) exitVideo();
         if (webView != null) {
