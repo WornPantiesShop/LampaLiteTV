@@ -17,11 +17,11 @@
         return String(value || '').replace(/\/$/, '').toLowerCase();
     }
 
-    function hasOnlineModPlugin() {
+    function hasWorkingOnlineModPlugin() {
         return (Lampa.Plugins.get() || []).some(plugin => {
             const url = normalizeUrl(plugin.url);
-            return onlineModUrls.some(candidate => url === normalizeUrl(candidate))
-                || (plugin.name === 'Online Mod' && url.includes('nb557.surge') && url.includes('/online_mod.js'));
+            return url === normalizeUrl(onlineModPrimaryUrl)
+                || (plugin.name === 'Online Mod' && url.includes('nb557.surge.sh/online_mod.js'));
         });
     }
 
@@ -32,7 +32,7 @@
             for (const migration of migrations) {
                 const isOnlineModMigration = migration.marker === 'lampa_lite_online_mod_seed_v3';
                 const isInstalled = Lampa.Storage.get(migration.marker, false);
-                if (isInstalled && !(isOnlineModMigration && !hasOnlineModPlugin())) continue;
+                if (isInstalled && !(isOnlineModMigration && !hasWorkingOnlineModPlugin())) continue;
                 for (const entry of migration.plugins) {
                     const existing = Lampa.Plugins.get().find(plugin => {
                         const url = normalizeUrl(plugin.url);

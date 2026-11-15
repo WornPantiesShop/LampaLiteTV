@@ -25,3 +25,11 @@ context.window.appready=true;delete context.window.__lampaLiteExtensions;
 vm.runInContext(source,context);assert.equal(plugins.length,2);assert.equal(plugins[0].status,0);
 assert.equal(loads.length,1);assert.equal(plugins[1].url,'http://nb557.surge.sh/online_mod.js');
 console.log('PASS: fourth extension migration preserves previous manual choices');
+
+// A stale dead host must be replaced even if the previous migration marker was already set.
+storage.clear();storage.set('lampa_lite_extensions_seed_v1',true);storage.set('lampa_lite_online_mod_seed_v3',true);
+plugins.length=0;plugins.push({url:'http://nb557.surge.ch/online_mod.js',name:'Online Mod',status:1});loads.length=0;
+context.window.appready=true;delete context.window.__lampaLiteExtensions;
+vm.runInContext(source,context);assert.equal(plugins.length,1);assert.equal(plugins[0].url,'http://nb557.surge.sh/online_mod.js');
+assert.equal(loads.length,1);assert.equal(context.window.__lampaLiteExtensions.status,'installed');
+console.log('PASS: dead Online Mod host is repaired even when the seed marker was already set');
