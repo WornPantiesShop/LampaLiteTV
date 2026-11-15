@@ -23,5 +23,5 @@ storage.clear();storage.set('lampa_lite_extensions_seed_v1',true);
 plugins.length=0;plugins.push({url:'https://modss.tv',status:0});loads.length=0;
 context.window.appready=true;delete context.window.__lampaLiteExtensions;
 vm.runInContext(source,context);assert.equal(plugins.length,2);assert.equal(plugins[0].status,0);
-assert.equal(loads.length,1);assert.equal(plugins[1].url,'http://nb557.surge.sh/online_mod.js');
+assert.equal(loads.length,1);assert.equal(plugins[1].url,'http://nb557.surge.ch/online_mod.js');
 console.log('PASS: fourth extension migration preserves previous manual choices');
