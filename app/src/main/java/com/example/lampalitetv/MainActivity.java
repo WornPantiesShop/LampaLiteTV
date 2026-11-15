@@ -496,14 +496,39 @@ public final class MainActivity extends Activity {
         setFullscreen();
     }
 
+    private boolean backLongPressHandled;
+
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        // Keep a single native BACK action; do not dispatch it to WebView twice.
-        // Long BACK no longer opens a settings dialog.
+        // Handle BACK once at the Activity level so WebView never receives it twice.
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) onBackPressed();
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() > 0 || event.isLongPress()) {
+                    if (!backLongPressHandled) {
+                        backLongPressHandled = true;
+                        showExitConfirmation();
+                    }
+                }
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (!event.isCanceled() && !backLongPressHandled) onBackPressed();
+                backLongPressHandled = false;
+                return true;
+            }
             return true;
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    private void showExitConfirmation() {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Выход из приложения")
+                .setMessage("Вы действительно хотите выйти из Lampa Lite TV?")
+                .setPositiveButton("Да", (dialog, which) -> finish())
+                .setNegativeButton("Нет", (dialog, which) -> dialog.dismiss())
+                .setOnCancelListener(dialog -> backLongPressHandled = false)
+                .show();
     }
 
     @Override public void onBackPressed() {
@@ -517,8 +542,8 @@ public final class MainActivity extends Activity {
     }
 
     private void navigateBack() {
+        // At the root page a short BACK press must never close the application.
         if (webView != null && webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
     }
 
     @Override protected void onPause() {
