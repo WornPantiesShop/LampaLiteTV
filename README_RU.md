@@ -12,7 +12,7 @@ Android TV WebView-оболочка Lampa для TCL C645 (Android 11, окол�
 
 ## Online Mod и HDRezka (1.5.7)
 
-Добавлено четвёртое расширение: `http://nb557.surge.ch/online_mod.js`.
+Добавлено четвёртое расширение: `http://nb557.surge.sh/online_mod.js`.
 Оно устанавливается отдельной миграцией: ранее отключённые/удалённые расширения не возвращаются.
 
 Для HDRezka добавлен ограниченный Android HTTPS-транспорт и поля cookies в Online Mod.
